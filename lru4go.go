@@ -24,7 +24,8 @@ type lrucache struct {
 	mu sync.Mutex
 }
 
-// New 新建一个lrucache
+// New create a new lrucache
+// size: max number of element
 func New(size int)(*lrucache, error) {
 	newCache := new(lrucache)
 	newCache.maxSize = size
@@ -32,18 +33,21 @@ func New(size int)(*lrucache, error) {
 	return newCache, nil
 }
 
-// Set new or update an element
+// Set create or update an element using key
+// 		key:	The identity of an element
+// 		value: 	new value of the element
+//		ttl:	expire time, unit: second
 func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 
-	// 确保参数个数正确
+	// Ensure ttl are correct
 	if len(ttl) > 1 {
 		return errors.New("wrong para number, 2 or 3 expected but more than 3 received")
 	}
-	var ttlnum int64
+	var elemTTL int64
 	if len(ttl) == 1 {
-		ttlnum = int64(ttl[0])
+		elemTTL = int64(ttl[0])
 	} else {
-		ttlnum = -1
+		elemTTL = -1
 	}
 
 	c.mu.Lock()
@@ -51,15 +55,17 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 
 	if e,ok := c.elemList[key]; ok {
 		e.data = value
-		if ttlnum == -1 {
-			e.expireTime = ttlnum
+		if elemTTL == -1 {
+			e.expireTime = elemTTL
 		} else {
-			e.expireTime = time.Now().Unix() + ttlnum
+			e.expireTime = time.Now().Unix() + elemTTL
 		}
 		c.mvKeyToFirst(key)
 	} else {
 		if c.elemCount + 1 > c.maxSize {
-			c.eliminationOldest()
+			if c.checkExpired() <= 0 {
+				c.eliminationOldest()
+			}
 		}
 		newElem := &elem{
 			key: key,
@@ -68,8 +74,8 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 			pre: nil,
 			next: c.first,
 		}
-		if ttlnum != -1 {
-			newElem.expireTime = time.Now().Unix() + ttlnum
+		if elemTTL != -1 {
+			newElem.expireTime = time.Now().Unix() + elemTTL
 		}
 		c.first = newElem
 		c.elemList[key] = newElem
@@ -79,14 +85,16 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 	return nil
 }
 
-// Get get an element by key
+// Get Get the value of a cached element by key. If key do not exist, this function will return nil and a error msg
+// 		key:	The identity of an element
+//		return:
+//			value: 	the cached value, nil if key do not exist
+// 			err:	error info, nil if value is not nil
 func (c *lrucache)Get(key interface{}) (value interface{}, err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if v, ok := c.elemList[key]; ok {
 		if time.Now().Unix() > v.expireTime {
 			// 如果过期了
-			_ = c.Delete(key)
+			c.deleteByKey(key)
 			return nil, errors.New("the key was expired")
 		}
 		c.mvKeyToFirst(key)
@@ -99,27 +107,11 @@ func (c *lrucache)Get(key interface{}) (value interface{}, err error) {
 func (c *lrucache)Delete(key interface{}) error{
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if v, ok := c.elemList[key]; ok {
-		if v.pre == nil {
-			// 当key是第一个元素时，清空元素列表，充值指针和元素计数
-			c.elemList = make(map[interface{}]*elem)
-			c.elemCount = 0
-			c.last =  nil
-			c.first = nil
-			return nil
-		} else if v.next == nil {
-			// 当key不是第一个元素，但是是最后一个元素时,修改前一个元素的next指针并修改c.last指针
-			v.pre.next = v.next
-			c.last = v.pre
-		} else {
-			// 中间元素，修改前后指针
-			v.pre.next = v.next
-			v.next.pre = v.pre
-		}
-		delete(c.elemList, key)
-		c.elemCount--
+	if _, ok := c.elemList[key]; !ok {
+		return errors.New(fmt.Sprintf("key %T do not exist", key))
 	}
-	return errors.New(fmt.Sprintf("key %T do not exist", key))
+	c.deleteByKey(key)
+	return nil
 }
 
 // updateKeyPtr 更新对应key的指针，放到链表的第一个
@@ -158,4 +150,41 @@ func (c *lrucache)  eliminationOldest() {
 	key := c.last.key
 	c.last = c.last.pre
 	delete(c.elemList, key)
+}
+
+func (c *lrucache) deleteByKey(key interface{}) {
+	if v, ok := c.elemList[key]; ok {
+		if v.pre == nil {
+			// 当key是第一个元素时，清空元素列表，充值指针和元素计数
+			c.elemList = make(map[interface{}]*elem)
+			c.elemCount = 0
+			c.last =  nil
+			c.first = nil
+			return
+		} else if v.next == nil {
+			// 当key不是第一个元素，但是是最后一个元素时,修改前一个元素的next指针并修改c.last指针
+			v.pre.next = v.next
+			c.last = v.pre
+		} else {
+			// 中间元素，修改前后指针
+			v.pre.next = v.next
+			v.next.pre = v.pre
+		}
+		delete(c.elemList, key)
+		c.elemCount--
+	}
+}
+
+func (c *lrucache) checkExpired() int {
+	now := time.Now().Unix()
+	tmp := c.first
+	count := 0
+	for tmp != nil {
+		if now > tmp.expireTime {
+			c.deleteByKey(tmp.key)
+			count++
+		}
+		tmp = tmp.next
+	}
+	return count
 }
