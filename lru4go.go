@@ -128,6 +128,20 @@ func (c *lrucache) Reset() {
     c.elemCount = 0
 }
 
+// Keys get all cached unexpired keys.
+func (c *lrucache) Keys() []interface{} {
+    var keys []interface{}
+    tmp := c.first
+    now := time.Now().Unix()
+    for tmp != nil {
+        if tmp.expireTime == -1 || now > tmp.expireTime {
+            keys = append(keys, tmp.key)
+        }
+        tmp = tmp.next
+    }
+    return keys
+}
+
 // updateKeyPtr 更新对应key的指针，放到链表的第一个
 func (c *lrucache) mvKeyToFirst(key interface{}) {
     elem := c.elemList[key]
