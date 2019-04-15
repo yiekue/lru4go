@@ -8,25 +8,25 @@ import (
 )
 
 type elem struct {
-    key interface{}
-    data interface{}
+    key        interface{}
+    data       interface{}
     expireTime int64
-    next *elem
-    pre *elem
+    next       *elem
+    pre        *elem
 }
 
 type lrucache struct {
-    maxSize int
+    maxSize   int
     elemCount int
-    elemList map[interface{}]*elem
-    first *elem
-    last *elem
-    mu sync.Mutex
+    elemList  map[interface{}]*elem
+    first     *elem
+    last      *elem
+    mu        sync.Mutex
 }
 
 // New create a new lrucache
 // size: max number of element
-func New(size int)(*lrucache, error) {
+func New(size int) (*lrucache, error) {
     newCache := new(lrucache)
     newCache.maxSize = size
     newCache.elemCount = 0
@@ -38,7 +38,7 @@ func New(size int)(*lrucache, error) {
 // 		key:	The identity of an element
 // 		value: 	new value of the element
 //		ttl:	expire time, unit: second
-func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
+func (c *lrucache) Set(key interface{}, value interface{}, ttl ...int) error {
 
     // Ensure ttl are correct
     if len(ttl) > 1 {
@@ -54,7 +54,7 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
     c.mu.Lock()
     defer c.mu.Unlock()
 
-    if e,ok := c.elemList[key]; ok {
+    if e, ok := c.elemList[key]; ok {
         e.data = value
         if elemTTL == -1 {
             e.expireTime = elemTTL
@@ -63,17 +63,17 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
         }
         c.mvKeyToFirst(key)
     } else {
-        if c.elemCount + 1 > c.maxSize {
+        if c.elemCount+1 > c.maxSize {
             if c.checkExpired() <= 0 {
                 c.eliminationOldest()
             }
         }
         newElem := &elem{
-            key: key,
-            data: value,
+            key:        key,
+            data:       value,
             expireTime: -1,
-            pre: nil,
-            next: c.first,
+            pre:        nil,
+            next:       c.first,
         }
         if elemTTL != -1 {
             newElem.expireTime = time.Now().Unix() + elemTTL
@@ -94,7 +94,7 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 //		return:
 //			value: 	the cached value, nil if key do not exist
 // 			err:	error info, nil if value is not nil
-func (c *lrucache)Get(key interface{}) (value interface{}, err error) {
+func (c *lrucache) Get(key interface{}) (value interface{}, err error) {
     if v, ok := c.elemList[key]; ok {
         if v.expireTime != -1 && time.Now().Unix() > v.expireTime {
             // 如果过期了
@@ -108,7 +108,7 @@ func (c *lrucache)Get(key interface{}) (value interface{}, err error) {
 }
 
 // Delete delete an element
-func (c *lrucache)Delete(key interface{}) error{
+func (c *lrucache) Delete(key interface{}) error {
     c.mu.Lock()
     defer c.mu.Unlock()
     if _, ok := c.elemList[key]; !ok {
@@ -119,7 +119,7 @@ func (c *lrucache)Delete(key interface{}) error{
 }
 
 // Flush delete all cached elements .
-func (c *lrucache)Reset(){
+func (c *lrucache) Reset() {
     c.mu.Lock()
     defer c.mu.Unlock()
     c.elemList = make(map[interface{}]*elem)
@@ -128,9 +128,8 @@ func (c *lrucache)Reset(){
     c.elemCount = 0
 }
 
-
 // updateKeyPtr 更新对应key的指针，放到链表的第一个
-func (c *lrucache)mvKeyToFirst(key interface{}) {
+func (c *lrucache) mvKeyToFirst(key interface{}) {
     elem := c.elemList[key]
     if elem.pre == nil {
         // 当key是第一个元素时，不做动作
@@ -155,7 +154,7 @@ func (c *lrucache)mvKeyToFirst(key interface{}) {
     }
 }
 
-func (c *lrucache)  eliminationOldest() {
+func (c *lrucache) eliminationOldest() {
     if c.last == nil {
         return
     }
@@ -173,14 +172,14 @@ func (c *lrucache) deleteByKey(key interface{}) {
             // 当key是第一个元素时，清空元素列表，充值指针和元素计数
             c.elemList = make(map[interface{}]*elem)
             c.elemCount = 0
-            c.last =  nil
+            c.last = nil
             c.first = nil
             return
         } else if v.next == nil {
             // 当key不是第一个元素，但是是最后一个元素时,修改前一个元素的next指针并修改c.last指针
             v.pre.next = v.next
             c.last = v.pre
-        } else if v.pre == nil{
+        } else if v.pre == nil {
             c.first = v.next
             c.first.pre = nil
         } else {
