@@ -30,6 +30,7 @@ func New(size int)(*lrucache, error) {
 	newCache := new(lrucache)
 	newCache.maxSize = size
 	newCache.elemCount = 0
+	newCache.elemList = make(map[interface{}]*elem)
 	return newCache, nil
 }
 
@@ -77,6 +78,9 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 		if elemTTL != -1 {
 			newElem.expireTime = time.Now().Unix() + elemTTL
 		}
+		if c.first != nil {
+			c.first.pre = newElem
+		}
 		c.first = newElem
 		c.elemList[key] = newElem
 
@@ -92,7 +96,7 @@ func (c *lrucache)Set(key interface{}, value interface{}, ttl...int) error {
 // 			err:	error info, nil if value is not nil
 func (c *lrucache)Get(key interface{}) (value interface{}, err error) {
 	if v, ok := c.elemList[key]; ok {
-		if time.Now().Unix() > v.expireTime {
+		if v.expireTime != -1 && time.Now().Unix() > v.expireTime {
 			// 如果过期了
 			c.deleteByKey(key)
 			return nil, errors.New("the key was expired")
@@ -113,6 +117,17 @@ func (c *lrucache)Delete(key interface{}) error{
 	c.deleteByKey(key)
 	return nil
 }
+
+// Flush delete all cached elements .
+func (c *lrucache)Reset(){
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.elemList = make(map[interface{}]*elem)
+	c.first = nil
+	c.last = nil
+	c.elemCount = 0
+}
+
 
 // updateKeyPtr 更新对应key的指针，放到链表的第一个
 func (c *lrucache)mvKeyToFirst(key interface{}) {
@@ -154,7 +169,7 @@ func (c *lrucache)  eliminationOldest() {
 
 func (c *lrucache) deleteByKey(key interface{}) {
 	if v, ok := c.elemList[key]; ok {
-		if v.pre == nil {
+		if v.pre == nil && v.next == nil {
 			// 当key是第一个元素时，清空元素列表，充值指针和元素计数
 			c.elemList = make(map[interface{}]*elem)
 			c.elemCount = 0
@@ -165,6 +180,9 @@ func (c *lrucache) deleteByKey(key interface{}) {
 			// 当key不是第一个元素，但是是最后一个元素时,修改前一个元素的next指针并修改c.last指针
 			v.pre.next = v.next
 			c.last = v.pre
+		} else if v.pre == nil{
+			c.first = v.next
+			c.first.pre = nil
 		} else {
 			// 中间元素，修改前后指针
 			v.pre.next = v.next
@@ -180,7 +198,7 @@ func (c *lrucache) checkExpired() int {
 	tmp := c.first
 	count := 0
 	for tmp != nil {
-		if now > tmp.expireTime {
+		if tmp.expireTime != -1 && now > tmp.expireTime {
 			c.deleteByKey(tmp.key)
 			count++
 		}
