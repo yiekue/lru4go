@@ -134,7 +134,7 @@ func (c *lrucache) Keys() []interface{} {
     tmp := c.first
     now := time.Now().Unix()
     for tmp != nil {
-        if tmp.expireTime == -1 || now > tmp.expireTime {
+        if tmp.expireTime == -1 || now < tmp.expireTime {
             keys = append(keys, tmp.key)
         }
         tmp = tmp.next
