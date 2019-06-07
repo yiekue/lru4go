@@ -7,10 +7,7 @@ import (
 
 func TestNew(t *testing.T) {
 	cache, err := New(50)
-	if err != nil {
-		t.Fatal("create cache failed!")
-	}
-	if cache == nil {
+	if err != nil || cache == nil {
 		t.Fatal("create cache failed!")
 	}
 }

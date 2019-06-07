@@ -1,9 +1,8 @@
 # lru4go
-LRU cache implementation based on go, supports expiration time.
+使用golang实现的LRU缓存.
 
-+ thread safety
-+ support expiration time
-+ lazy elimination
++ 线程安全
++ 支持设置过期时间
 
 example:
 ```go
