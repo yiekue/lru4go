@@ -1,93 +1,65 @@
 package lru4go
 
 import (
+	"container/list"
 	"errors"
-	"fmt"
 	"sync"
-	"time"
 )
 
-type elem struct {
-	key        interface{}
-	data       interface{}
-	expireTime int64
-	next       *elem
-	pre        *elem
+// Lrucache cache data structure
+type Lrucache struct {
+	cap  int
+	dict map[string]*list.Element
+	l    *list.List
+	mu   *sync.Mutex
 }
 
-// Lrucache 存储结构体
-type Lrucache struct {
-	maxSize   int
-	elemCount int
-	elemList  map[interface{}]*elem
-	first     *elem
-	last      *elem
-	mu        sync.Mutex
+type elem struct {
+	k      string
+	v      interface{}
+	expire int64
 }
 
 // New create a new lrucache
 // size: max number of element
 func New(size int) (*Lrucache, error) {
-	newCache := new(Lrucache)
-	newCache.maxSize = size
-	newCache.elemCount = 0
-	newCache.elemList = make(map[interface{}]*elem)
-	return newCache, nil
+	if size < 0 {
+		return nil, errors.New("size must be positive")
+	}
+	lc := &Lrucache{
+		cap:  size,
+		l:    list.New(),
+		dict: make(map[string]*list.Element),
+		mu:   &sync.Mutex{},
+	}
+	return lc, nil
 }
 
 // Set create or update an element using key
 // 		key:	The identity of an element
 // 		value: 	new value of the element
-//		ttl:	expire time, unit: second
-func (c *Lrucache) Set(key interface{}, value interface{}, ttl ...int) error {
+func (lc *Lrucache) Set(key string, value interface{}) {
 
-	// Ensure ttl are correct
-	if len(ttl) > 1 {
-		return errors.New("wrong para number, 2 or 3 expected but more than 3 received")
-	}
-	var elemTTL int64
-	if len(ttl) == 1 {
-		elemTTL = int64(ttl[0])
-	} else {
-		elemTTL = -1
+	if v, ok := lc.dict[key]; ok {
+		lc.l.MoveToFront(v)
+		v.Value.(*elem).v = value
+		v.Value.(*elem).expire = 0
+		return
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if e, ok := c.elemList[key]; ok {
-		e.data = value
-		if elemTTL == -1 {
-			e.expireTime = elemTTL
-		} else {
-			e.expireTime = time.Now().Unix() + elemTTL
-		}
-		c.mvKeyToFirst(key)
-	} else {
-		if c.elemCount+1 > c.maxSize {
-			if c.checkExpired() <= 0 {
-				c.eliminationOldest()
-			}
-		}
-		newElem := &elem{
-			key:        key,
-			data:       value,
-			expireTime: -1,
-			pre:        nil,
-			next:       c.first,
-		}
-		if elemTTL != -1 {
-			newElem.expireTime = time.Now().Unix() + elemTTL
-		}
-		if c.first != nil {
-			c.first.pre = newElem
-		}
-		c.first = newElem
-		c.elemList[key] = newElem
-
-		c.elemCount++
+	if lc.l.Len() >= lc.cap {
+		lc.DeleteOldest()
 	}
-	return nil
+
+	e := &elem{
+		k:      key,
+		v:      value,
+		expire: 0,
+	}
+	node := lc.l.PushFront(e)
+	lc.dict[key] = node
+
+	return
 }
 
 // Get Get the value of a cached element by key. If key do not exist, this function will return nil and a error msg
@@ -95,128 +67,39 @@ func (c *Lrucache) Set(key interface{}, value interface{}, ttl ...int) error {
 //		return:
 //			value: 	the cached value, nil if key do not exist
 // 			err:	error info, nil if value is not nil
-func (c *Lrucache) Get(key interface{}) (value interface{}, err error) {
-	if v, ok := c.elemList[key]; ok {
-		if v.expireTime != -1 && time.Now().Unix() > v.expireTime {
-			// 如果过期了
-			c.deleteByKey(key)
-			return nil, errors.New("the key was expired")
-		}
-		c.mvKeyToFirst(key)
-		return v.data, nil
+func (lc *Lrucache) Get(key string) (value interface{}, err error) {
+	if v, ok := lc.dict[key]; ok {
+		lc.l.MoveToFront(v)
+		return v.Value.(*elem).v, nil
 	}
-	return nil, errors.New("no value found")
+	return nil, errors.New("not found")
 }
 
 // Delete delete an element
-func (c *Lrucache) Delete(key interface{}) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.elemList[key]; !ok {
-		return fmt.Errorf("key %T do not exist", key)
+func (lc *Lrucache) Delete(key string) error {
+	if v, ok := lc.dict[key]; ok {
+		lc.l.Remove(v)
+		delete(lc.dict, key)
+		return nil
 	}
-	c.deleteByKey(key)
-	return nil
+	return errors.New("not found")
 }
 
-// Reset delete all cached elements .
-func (c *Lrucache) Reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.elemList = make(map[interface{}]*elem)
-	c.first = nil
-	c.last = nil
-	c.elemCount = 0
+// DeleteOldest delete the oldest element
+func (lc *Lrucache) DeleteOldest() {
+	oldest := lc.l.Back()
+	if oldest != nil {
+		oel := oldest.Value.(*elem)
+		delete(lc.dict, oel.k)
+		lc.l.Remove(oldest)
+	}
 }
 
 // Keys get all cached unexpired keys.
-func (c *Lrucache) Keys() []interface{} {
-	var keys []interface{}
-	tmp := c.first
-	now := time.Now().Unix()
-	for tmp != nil {
-		if tmp.expireTime == -1 || now < tmp.expireTime {
-			keys = append(keys, tmp.key)
-		}
-		tmp = tmp.next
+func (lc *Lrucache) Keys() []string {
+	var keys []string
+	for k := range lc.dict {
+		keys = append(keys, k)
 	}
 	return keys
-}
-
-// updateKeyPtr 更新对应key的指针，放到链表的第一个
-func (c *Lrucache) mvKeyToFirst(key interface{}) {
-	elem := c.elemList[key]
-	if elem.pre == nil {
-		// 当key是第一个元素时，不做动作
-		return
-	} else if elem.next == nil {
-		// 当key不是第一个元素，但是是最后一个元素时，提到第一个元素去
-		elem.pre.next = nil
-
-		c.last = elem.pre
-
-		elem.pre = nil
-		elem.next = c.first
-		c.first = elem
-
-	} else {
-		elem.pre.next = elem.next
-		elem.next.pre = elem.pre
-
-		elem.next = c.first
-		elem.pre = nil
-		c.first = elem
-	}
-}
-
-func (c *Lrucache) eliminationOldest() {
-	if c.last == nil {
-		return
-	}
-	if c.last.pre != nil {
-		c.last.pre.next = nil
-	}
-	key := c.last.key
-	c.last = c.last.pre
-	delete(c.elemList, key)
-}
-
-func (c *Lrucache) deleteByKey(key interface{}) {
-	if v, ok := c.elemList[key]; ok {
-		if v.pre == nil && v.next == nil {
-			// 当key是第一个元素时，清空元素列表，充值指针和元素计数
-			c.elemList = make(map[interface{}]*elem)
-			c.elemCount = 0
-			c.last = nil
-			c.first = nil
-			return
-		} else if v.next == nil {
-			// 当key不是第一个元素，但是是最后一个元素时,修改前一个元素的next指针并修改c.last指针
-			v.pre.next = v.next
-			c.last = v.pre
-		} else if v.pre == nil {
-			c.first = v.next
-			c.first.pre = nil
-		} else {
-			// 中间元素，修改前后指针
-			v.pre.next = v.next
-			v.next.pre = v.pre
-		}
-		delete(c.elemList, key)
-		c.elemCount--
-	}
-}
-
-func (c *Lrucache) checkExpired() int {
-	now := time.Now().Unix()
-	tmp := c.first
-	count := 0
-	for tmp != nil {
-		if tmp.expireTime != -1 && now > tmp.expireTime {
-			c.deleteByKey(tmp.key)
-			count++
-		}
-		tmp = tmp.next
-	}
-	return count
 }
