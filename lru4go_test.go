@@ -12,6 +12,13 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestNew_negtive(t *testing.T) {
+	cache, err := New(-1)
+	if err == nil || cache != nil {
+		t.Fatal("cache new negitive size test failed")
+	}
+}
+
 func TestLrucache_Set(t *testing.T) {
 	cache, _ := New(50)
 	if cache == nil {
@@ -56,6 +63,17 @@ func TestLrucache_Delete(t *testing.T) {
 		t.Error("delete failed!")
 	}
 }
+func TestLrucache_DeleteNotExist(t *testing.T) {
+	cache, _ := New(50)
+	cache.Set("t1", 1)
+	cache.Set("t2", 2)
+
+	err := cache.Delete("t3")
+
+	if err == nil {
+		t.Error("delete do not exist failed!")
+	}
+}
 
 func TestLrucache_expireOldest(t *testing.T) {
 	max := 10
@@ -67,5 +85,30 @@ func TestLrucache_expireOldest(t *testing.T) {
 	v, err := cache.Get(fmt.Sprintf("%d", 0))
 	if err == nil {
 		t.Error("expire oldest failed:", v)
+	}
+}
+
+func TestLrucache_Covere(t *testing.T) {
+	lc, _ := New(5)
+	lc.Set("test", 1)
+	lc.Set("test2", 2)
+	lc.Set("test3", 3)
+	lc.Set("test4", 4)
+	lc.Set("test5", 5)
+
+	lc.Set("test", 6)
+
+	lc.Set("test6", 6)
+	_, err := lc.Get("test2")
+	if err == nil {
+		t.Error("update failed!")
+	}
+
+	t1, err := lc.Get("test")
+	if err != nil {
+		t.Error("update key failed")
+	}
+	if t1 != 6 {
+		t.Error("value after update failed")
 	}
 }
